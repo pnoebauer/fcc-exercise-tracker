@@ -27,11 +27,10 @@ const User = mongoose.model('User', usersSchema);
 // The returned response will be an object with username and _id properties.
 app.post('/api/users', async (req, res) => {
 	const {username} = req.body;
-	console.log(username);
+	// console.log(username);
 
 	const findUser = await User.findOne({username}).exec();
-
-	console.log(findUser);
+	// console.log(findUser);
 
 	// if the user does not exist yet, add it to the db
 	// return username and _id
@@ -73,7 +72,7 @@ const exerciseSchema = new mongoose.Schema({
 	username: String,
 	description: {type: String, required: true},
 	duration: {type: Number, required: true},
-	date: {type: Date, default: Date.now},
+	date: {type: Date, default: Date.now, transform: v => v.toDateString()},
 });
 
 const Exercise = mongoose.model('Exercise', exerciseSchema);
@@ -103,9 +102,16 @@ app.post('/api/users/:id/exercises', async (req, res) => {
 		try {
 			const addedExercise = await new Exercise(exerciseData).save();
 			const {username, description, duration, date} = addedExercise;
+
 			// console.log(addedExercise);
 			if (addedExercise) {
-				return res.json({username, description, duration, date});
+				return res.json({
+					_id: id,
+					username,
+					date: date.toDateString(),
+					duration,
+					description,
+				});
 			} else {
 				return res.json({error: 'issue adding the exercise to the db'});
 			}
@@ -117,6 +123,56 @@ app.post('/api/users/:id/exercises', async (req, res) => {
 
 // Exercise.remove({}, (err, data) => console.log(data));
 // Exercise.find({}).select('-__v').exec().then(console.log);
+
+const isValidDate = dateString => {
+	// first check if date is in yyyy-mm-dd format
+	const regEx = /^\d{4}-\d{2}-\d{2}$/;
+	if (!dateString.match(regEx)) return false; // Invalid format
+
+	// next check if the date is valid (e.g. invalid -> 0000-00-00)
+	const d = new Date(dateString);
+	const dNum = d.getTime();
+	// if(!dNum && dNum !== 0) return false; // NaN value, Invalid date
+	if (Object.is(dNum, NaN)) return false; // NaN value, Invalid date
+
+	return d.toISOString().slice(0, 10) === dateString;
+};
+
+// You can make a GET request to /api/users/:_id/logs to retrieve a full exercise log of any user.
+// The returned response will be the user object with a log array of all the exercises added.
+// Each log item has the description, duration, and date properties.
+app.get('/api/users/:id/logs', async (req, res) => {
+	const {id} = req.params;
+	const {from, to, limit} = req.query;
+
+	console.log(req.query, '---------queried');
+
+	const findUser = await User.findById(id).exec();
+	const {username} = findUser;
+
+	const findCriteria = {username};
+	// const arr = await Movie.find({ year: { $gte: 1980, $lte: 1989 } });
+	if (from && isValidDate(from)) {
+		if (!findCriteria.date) findCriteria.date = {};
+		findCriteria.date['$gte'] = from;
+	}
+	if (to && isValidDate(to)) {
+		if (!findCriteria.date) findCriteria.date = {};
+		findCriteria.date['$lte'] = to;
+	}
+
+	const getAllExercises = await Exercise.find(findCriteria)
+		.select('-_id -username -__v')
+		.limit(Number(limit))
+		.exec();
+
+	// A request to a user's log (/api/users/:_id/logs) returns an object
+	// with a count property representing the number of exercises returned.
+	const count = getAllExercises.length;
+	// console.log(getAllExercises, count);
+
+	res.json({_id: id, username, count, log: getAllExercises});
+});
 
 const listener = app.listen(process.env.PORT || 3000, () => {
 	console.log('Your app is listening on port ' + listener.address().port);
